@@ -1,0 +1,17 @@
+services:
+  tts:
+    build: .
+    volumes:
+      - ./input:/data/input
+      - ./output:/data/output
+      - silero-cache:/root/.cache/torch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  silero-cache:
