@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import num2words
 import torch
 import torchaudio
 
@@ -19,8 +20,25 @@ SPEAKERS = ["aidar", "baya", "kseniya", "xenia", "eugene"]
 MAX_CHARS = 900  # Silero per-call character limit
 
 
+def numbers_to_words(text: str, lang: str = "ru") -> str:
+    """Replace numbers with their word equivalents."""
+    def replace_number(match):
+        num_str = match.group(0)
+        try:
+            if "." in num_str or "," in num_str:
+                num = float(num_str.replace(",", "."))
+            else:
+                num = int(num_str)
+            return num2words.num2words(num, lang=lang)
+        except (ValueError, OverflowError):
+            return num_str
+
+    return re.sub(r"\d+[.,]?\d*", replace_number, text)
+
+
 def split_into_sentences(text: str) -> list[str]:
     text = re.sub(r"\s+", " ", text).strip()
+    text = numbers_to_words(text)
     parts = re.split(r'(?<=[.!?…»"])\s+', text)
     return [p.strip() for p in parts if p.strip()]
 
