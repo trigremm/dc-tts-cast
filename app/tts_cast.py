@@ -46,14 +46,16 @@ def split_long_text(text: str, max_len: int = MAX_CHARS) -> list[str]:
     return chunks
 
 
-def save_chunk_as_mp3(audio: torch.Tensor, sample_rate: int, output_path: Path):
+def save_chunk_as_mp3(
+    audio: torch.Tensor, sample_rate: int, output_path: Path, speed: float = 1.0
+):
     wav_path = output_path.with_suffix(".wav")
     torchaudio.save(str(wav_path), audio.unsqueeze(0), sample_rate)
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", str(wav_path), "-b:a", "192k", str(output_path)],
-        check=True,
-        capture_output=True,
-    )
+    cmd = ["ffmpeg", "-y", "-i", str(wav_path)]
+    if speed != 1.0:
+        cmd += ["-filter:a", f"atempo={speed}"]
+    cmd += ["-b:a", "192k", str(output_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
     wav_path.unlink()
 
 
@@ -65,6 +67,7 @@ def process_file(
     sample_rate: int,
     chunk_minutes: int,
     device: torch.device,
+    speed: float = 1.0,
 ):
     log.info(f"Processing: {txt_path.name}")
 
@@ -78,7 +81,7 @@ def process_file(
     book_dir = output_dir / txt_path.stem
     book_dir.mkdir(parents=True, exist_ok=True)
 
-    target_samples = chunk_minutes * 60 * sample_rate
+    target_samples = int(chunk_minutes * 60 * sample_rate * speed)
     silence = torch.zeros(int(0.3 * sample_rate))  # 300ms pause between sentences
 
     chunk_parts: list[torch.Tensor] = []
@@ -107,8 +110,8 @@ def process_file(
             if chunk_samples >= target_samples:
                 combined = torch.cat(chunk_parts)
                 mp3_path = book_dir / f"{chunk_num:03d}.mp3"
-                save_chunk_as_mp3(combined, sample_rate, mp3_path)
-                minutes = chunk_samples / sample_rate / 60
+                save_chunk_as_mp3(combined, sample_rate, mp3_path, speed)
+                minutes = chunk_samples / sample_rate / 60 / speed
                 log.info(f"  Saved {mp3_path.name} ({minutes:.1f} min)")
                 chunk_num += 1
                 chunk_parts = []
@@ -138,6 +141,9 @@ def main():
     parser.add_argument(
         "--duration", type=int, default=20, help="chunk duration in minutes"
     )
+    parser.add_argument(
+        "--speed", type=float, default=1.0, help="playback speed (e.g. 1.5)"
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input)
@@ -149,7 +155,8 @@ def main():
         sys.exit(1)
 
     log.info(
-        f"Files: {len(txt_files)}, speaker: {args.speaker}, chunk: {args.duration} min"
+        f"Files: {len(txt_files)}, speaker: {args.speaker}, "
+        f"chunk: {args.duration} min, speed: {args.speed}x"
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -173,6 +180,7 @@ def main():
             args.sample_rate,
             args.duration,
             device,
+            args.speed,
         )
 
     log.info("All done!")

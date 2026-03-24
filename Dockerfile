@@ -6,7 +6,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir torchaudio
+RUN pip install --no-cache-dir torchaudio omegaconf
 
 # Pre-download Silero TTS model
 RUN python -c "import torch; torch.hub.load('snakers4/silero-models', model='silero_tts', language='ru', speaker='v4_ru')"
