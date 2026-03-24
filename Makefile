@@ -6,6 +6,7 @@ DURATION    := 20
 SAMPLE_RATE := 48000
 SPEED       := 1.0
 COUNT       := 0
+MASK        ?=
 INPUT       := /data/input
 OUTPUT      := /data/output
 INPUT_HOST  := $(PWD)/input
@@ -32,7 +33,8 @@ run: ## Run with options (e.g. make run SPEAKER=baya SPEED=1.5 INPUT_HOST=./inpu
 		--speed $(SPEED) \
 		--input-host $(abspath $(INPUT_HOST)) \
 		--output-host $(abspath $(OUTPUT_HOST)) \
-		$(if $(filter-out 0,$(COUNT)),--count $(COUNT))
+		$(if $(filter-out 0,$(COUNT)),--count $(COUNT)) \
+		$(if $(MASK),--mask $(MASK))
 
 run-resume: ## Resume from saved config (e.g. make run-resume OUTPUT_HOST=./output/o_e_v_baya)
 	$(eval CFG := $(OUTPUT_HOST)/tts_config.json)

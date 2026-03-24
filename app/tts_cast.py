@@ -206,6 +206,10 @@ def main():
         help="process at most N files (0 = all remaining)",
     )
     parser.add_argument(
+        "--mask", default=None,
+        help="only process files containing this string (e.g. 'chapter')",
+    )
+    parser.add_argument(
         "--config", default=None,
         help="path to JSON config file (overrides CLI defaults)",
     )
@@ -249,11 +253,16 @@ def main():
         "skip-existing": True,
         "start": 0,
         "count": 0,
+        "mask": args.mask,
         "input-host": args.input_host,
         "output-host": args.output_host,
     })
 
     txt_files = sorted(input_dir.glob("*.txt"))
+
+    # Filter by mask
+    if args.mask:
+        txt_files = [f for f in txt_files if args.mask in f.name]
     if not txt_files:
         log.error(f"No .txt files in {input_dir}")
         sys.exit(1)
