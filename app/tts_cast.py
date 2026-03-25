@@ -9,15 +9,88 @@ import subprocess
 import sys
 from pathlib import Path
 
+import io
+import textwrap
+
 import num2words
 import torch
 import torchaudio
+from mutagen.id3 import APIC, ID3, TIT2, TALB, TPE1, TRCK
+from PIL import Image, ImageDraw, ImageFont
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 SPEAKERS = ["aidar", "baya", "kseniya", "xenia", "eugene"]
 MAX_CHARS = 900  # Silero per-call character limit
+COVER_SIZE = 600
+COVER_BG = (40, 40, 60)
+COVER_FG = (230, 230, 240)
+
+
+def generate_cover(album: str, title: str) -> bytes:
+    """Generate a simple cover image with album and title text."""
+    img = Image.new("RGB", (COVER_SIZE, COVER_SIZE), COVER_BG)
+    draw = ImageDraw.Draw(img)
+
+    # Try to find a font, fall back to default
+    font_large = None
+    font_small = None
+    for font_path in [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]:
+        try:
+            font_large = ImageFont.truetype(font_path, 42)
+            font_small = ImageFont.truetype(font_path, 28)
+            break
+        except OSError:
+            continue
+    if font_large is None:
+        font_large = ImageFont.load_default()
+        font_small = font_large
+
+    # Draw album name (top)
+    album_lines = textwrap.wrap(album, width=20)
+    y = 80
+    for line in album_lines[:4]:
+        bbox = draw.textbbox((0, 0), line, font=font_large)
+        w = bbox[2] - bbox[0]
+        draw.text(((COVER_SIZE - w) / 2, y), line, fill=COVER_FG, font=font_large)
+        y += 50
+
+    # Divider line
+    y += 30
+    draw.line([(100, y), (COVER_SIZE - 100, y)], fill=COVER_FG, width=2)
+    y += 40
+
+    # Draw title/chapter (bottom)
+    title_lines = textwrap.wrap(title, width=28)
+    for line in title_lines[:5]:
+        bbox = draw.textbbox((0, 0), line, font=font_small)
+        w = bbox[2] - bbox[0]
+        draw.text(((COVER_SIZE - w) / 2, y), line, fill=COVER_FG, font=font_small)
+        y += 36
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def tag_mp3(mp3_path: Path, album: str, title: str, track_num: int, cover_data: bytes):
+    """Set ID3 tags and cover art on an mp3 file."""
+    try:
+        tags = ID3(str(mp3_path))
+    except Exception:
+        tags = ID3()
+
+    tags.add(TALB(encoding=3, text=album))
+    tags.add(TIT2(encoding=3, text=title))
+    tags.add(TPE1(encoding=3, text="Silero TTS"))
+    tags.add(TRCK(encoding=3, text=str(track_num)))
+    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_data))
+    tags.save(str(mp3_path))
+
 
 
 def numbers_to_words(text: str, lang: str = "ru") -> str:
@@ -87,6 +160,8 @@ def process_file(
     chunk_minutes: int,
     device: torch.device,
     speed: float = 1.0,
+    album: str = "",
+    track_num: int = 0,
 ):
     log.info(f"Processing: {txt_path.name}")
 
@@ -99,6 +174,11 @@ def process_file(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = txt_path.stem
+
+    # Read first line as chapter title for tagging
+    first_line = text.split("\n", 1)[0].strip()
+    title = first_line if first_line else stem
+    cover_data = generate_cover(album, title) if album else None
 
     target_samples = int(chunk_minutes * 60 * sample_rate * speed)
     silence = torch.zeros(int(0.3 * sample_rate))  # 300ms pause between sentences
@@ -131,6 +211,8 @@ def process_file(
                 mp3_name = f"{stem}_{chunk_num:03d}.mp3"
                 mp3_path = output_dir / mp3_name
                 save_chunk_as_mp3(combined, sample_rate, mp3_path, speed)
+                if cover_data:
+                    tag_mp3(mp3_path, album, title, track_num or chunk_num, cover_data)
                 minutes = chunk_samples / sample_rate / 60 / speed
                 log.info(f"  Saved {mp3_name} ({minutes:.1f} min)")
                 chunk_num += 1
@@ -149,6 +231,8 @@ def process_file(
             mp3_name = f"{stem}_{chunk_num:03d}.mp3"
         mp3_path = output_dir / mp3_name
         save_chunk_as_mp3(combined, sample_rate, mp3_path, speed)
+        if cover_data:
+            tag_mp3(mp3_path, album, title, track_num or chunk_num, cover_data)
         minutes = chunk_samples / sample_rate / 60 / speed
         log.info(f"  Saved {mp3_name} ({minutes:.1f} min)")
 
@@ -210,6 +294,10 @@ def main():
         help="only process files containing this string (e.g. 'chapter')",
     )
     parser.add_argument(
+        "--album", default=None,
+        help="album name for ID3 tags and cover art (default: output dir name)",
+    )
+    parser.add_argument(
         "--config", default=None,
         help="path to JSON config file (overrides CLI defaults)",
     )
@@ -254,9 +342,13 @@ def main():
         "start": 0,
         "count": 0,
         "mask": args.mask,
+        "album": args.album,
         "input-host": args.input_host,
         "output-host": args.output_host,
     })
+
+    # Album name: CLI arg > output dir name
+    album = args.album or output_dir.name
 
     txt_files = sorted(input_dir.glob("*.txt"))
 
@@ -315,6 +407,8 @@ def main():
             args.duration,
             device,
             args.speed,
+            album=album,
+            track_num=idx + 1,
         )
 
     log.info("All done!")
