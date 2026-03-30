@@ -92,9 +92,9 @@ def tag_mp3(mp3_path: Path, album: str, title: str, track_num: int, cover_data: 
     tags.save(str(mp3_path))
 
 
-
 def numbers_to_words(text: str, lang: str = "ru") -> str:
     """Replace numbers with their word equivalents."""
+
     def replace_number(match):
         num_str = match.group(0)
         try:
@@ -278,35 +278,45 @@ def main():
         "--speed", type=float, default=1.0, help="playback speed (e.g. 1.5)"
     )
     parser.add_argument(
-        "--skip-existing", action="store_true",
+        "--skip-existing",
+        action="store_true",
         help="skip files that already have mp3 output",
     )
     parser.add_argument(
-        "--start", type=int, default=0,
+        "--start",
+        type=int,
+        default=0,
         help="start from file N (0-based index in sorted list)",
     )
     parser.add_argument(
-        "--count", type=int, default=0,
+        "--count",
+        type=int,
+        default=0,
         help="process at most N files (0 = all remaining)",
     )
     parser.add_argument(
-        "--mask", default=None,
+        "--mask",
+        default=None,
         help="only process files containing this string (e.g. 'chapter')",
     )
     parser.add_argument(
-        "--album", default=None,
+        "--album",
+        default=None,
         help="album name for ID3 tags and cover art (default: output dir name)",
     )
     parser.add_argument(
-        "--config", default=None,
+        "--config",
+        default=None,
         help="path to JSON config file (overrides CLI defaults)",
     )
     parser.add_argument(
-        "--input-host", default=None,
+        "--input-host",
+        default=None,
         help="host-side input path (saved to config for resume)",
     )
     parser.add_argument(
-        "--output-host", default=None,
+        "--output-host",
+        default=None,
         help="host-side output path (saved to config for resume)",
     )
     args = parser.parse_args()
@@ -331,24 +341,31 @@ def main():
 
     # Save config to output dir so next run auto-resumes
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_config(config_path, {
-        "input": str(args.input),
-        "output": str(args.output),
-        "speaker": args.speaker,
-        "sample-rate": args.sample_rate,
-        "duration": args.duration,
-        "speed": args.speed,
-        "skip-existing": True,
-        "start": 0,
-        "count": 0,
-        "mask": args.mask,
-        "album": args.album,
-        "input-host": args.input_host,
-        "output-host": args.output_host,
-    })
+    save_config(
+        config_path,
+        {
+            "input": str(args.input),
+            "output": str(args.output),
+            "speaker": args.speaker,
+            "sample-rate": args.sample_rate,
+            "duration": args.duration,
+            "speed": args.speed,
+            "skip-existing": True,
+            "start": 0,
+            "count": 0,
+            "mask": args.mask,
+            "album": args.album,
+            "input-host": args.input_host,
+            "output-host": args.output_host,
+        },
+    )
 
-    # Album name: CLI arg > output dir name
-    album = args.album or output_dir.name
+    # Album name: CLI arg > host output dir name > container output dir name
+    album = args.album
+    if not album and args.output_host:
+        album = Path(args.output_host).name
+    if not album:
+        album = output_dir.name
 
     txt_files = sorted(input_dir.glob("*.txt"))
 
@@ -363,9 +380,9 @@ def main():
 
     # Apply range
     if args.start > 0:
-        txt_files = txt_files[args.start:]
+        txt_files = txt_files[args.start :]
     if args.count > 0:
-        txt_files = txt_files[:args.count]
+        txt_files = txt_files[: args.count]
 
     # Skip existing
     if args.skip_existing:
