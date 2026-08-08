@@ -116,6 +116,16 @@ def split_into_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def split_into_paragraph_sentences(text: str) -> list[tuple[str, bool]]:
+    """Split text into sentences, marking the last sentence of each paragraph."""
+    items: list[tuple[str, bool]] = []
+    for para in re.split(r"\n\s*\n", text):
+        sents = split_into_sentences(para)
+        for j, s in enumerate(sents):
+            items.append((s, j == len(sents) - 1))
+    return items
+
+
 def split_long_text(text: str, max_len: int = MAX_CHARS) -> list[str]:
     if len(text) <= max_len:
         return [text]
@@ -136,6 +146,31 @@ def split_long_text(text: str, max_len: int = MAX_CHARS) -> list[str]:
         chunks.append(text[:split_at].strip())
         text = text[split_at:].strip()
     return chunks
+
+
+def synth_with_retry(model, text: str, speaker: str, sample_rate: int, depth: int = 0):
+    """apply_tts with one plain retry, then recursive halving; [] only if all fail."""
+    err = None
+    for _ in range(2 if depth == 0 else 1):
+        try:
+            return [
+                model.apply_tts(text=text, speaker=speaker, sample_rate=sample_rate)
+            ]
+        except Exception as e:
+            err = e
+    if len(text) > 40 and depth < 6:
+        mid = text.rfind(" ", 10, len(text) // 2 + 20)
+        if mid <= 0:
+            mid = len(text) // 2
+        out = []
+        for piece in (text[:mid].strip(), text[mid:].strip()):
+            if piece:
+                out.extend(
+                    synth_with_retry(model, piece, speaker, sample_rate, depth + 1)
+                )
+        return out
+    log.error(f"TTS failed, text lost: {text[:80]}... — {err}")
+    return []
 
 
 def save_chunk_as_mp3(
@@ -166,7 +201,7 @@ def process_file(
     log.info(f"Processing: {txt_path.name}")
 
     text = txt_path.read_text(encoding="utf-8")
-    sentences = split_into_sentences(text)
+    sentences = split_into_paragraph_sentences(text)
 
     if not sentences:
         log.warning(f"No text in {txt_path.name}, skipping")
@@ -182,29 +217,29 @@ def process_file(
 
     target_samples = int(chunk_minutes * 60 * sample_rate * speed)
     silence = torch.zeros(int(0.3 * sample_rate))  # 300ms pause between sentences
+    para_silence = torch.zeros(int(0.8 * sample_rate))  # 800ms between paragraphs
 
     chunk_parts: list[torch.Tensor] = []
     chunk_samples = 0
     chunk_num = 1
     total = len(sentences)
 
-    for i, sentence in enumerate(sentences):
+    for i, (sentence, para_end) in enumerate(sentences):
         parts = split_long_text(sentence)
 
-        for part in parts:
-            try:
-                audio = model.apply_tts(
-                    text=part, speaker=speaker, sample_rate=sample_rate
-                )
-                if device.type == "cuda":
-                    audio = audio.cpu()
-            except Exception as e:
-                log.warning(f"TTS failed for: {part[:60]}... — {e}")
+        for pi, part in enumerate(parts):
+            audios = synth_with_retry(model, part, speaker, sample_rate)
+            if not audios:
                 continue
 
-            chunk_parts.append(audio)
-            chunk_parts.append(silence)
-            chunk_samples += len(audio) + len(silence)
+            pause = para_silence if para_end and pi == len(parts) - 1 else silence
+            for audio in audios:
+                if device.type == "cuda":
+                    audio = audio.cpu()
+                chunk_parts.append(audio)
+                chunk_samples += len(audio)
+            chunk_parts.append(pause)
+            chunk_samples += len(pause)
 
             if chunk_samples >= target_samples:
                 combined = torch.cat(chunk_parts)
@@ -378,6 +413,9 @@ def main():
 
     total_available = len(txt_files)
 
+    # Track numbers follow the full chapter list, so resume keeps ID3 numbering
+    track_map = {f: i + 1 for i, f in enumerate(txt_files)}
+
     # Apply range
     if args.start > 0:
         txt_files = txt_files[args.start :]
@@ -408,7 +446,7 @@ def main():
         repo_or_dir="snakers4/silero-models",
         model="silero_tts",
         language="ru",
-        speaker="v4_ru",
+        speaker="v5_ru",
     )
     model.to(device)
     log.info("Model loaded")
@@ -425,7 +463,7 @@ def main():
             device,
             args.speed,
             album=album,
-            track_num=idx + 1,
+            track_num=track_map[txt_file],
         )
 
     log.info("All done!")

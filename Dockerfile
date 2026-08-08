@@ -10,10 +10,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir torchaudio omegaconf num2words Pillow mutagen
+RUN pip install --no-cache-dir torchaudio omegaconf num2words Pillow mutagen scipy
 
 # Pre-download Silero TTS model
-RUN python -c "import torch; torch.hub.load('snakers4/silero-models', model='silero_tts', language='ru', speaker='v4_ru')"
+RUN python -c "import torch; torch.hub.load('snakers4/silero-models', model='silero_tts', language='ru', speaker='v5_ru')"
 
 COPY app/ .
 
